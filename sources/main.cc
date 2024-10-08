@@ -27,6 +27,8 @@
 #include <mutex>
 #include <cstring>
 #include <cassert>
+#include <getopt.h>
+
 
 int window_width = 2000;
 int window_height = 2000;
@@ -128,11 +130,49 @@ void load_tile(int tx, int ty, int layer)
 }
 
 
+static struct option long_options[] = {
+    {(char* const) "--no-transforms", no_argument, 0, 't'},
+    {(char* const) "help",            no_argument, 0, 'h'},
+    {0, 0,                                         0, 0}
+};
+
+void show_help(const char* argv0)
+{
+  fprintf(stderr, " tiled-image-viewer      Dirk Farin\n");
+  fprintf(stderr, "------------------------------------\n");
+  fprintf(stderr, "usage: tiled-image-viewer [options] image.heif\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "options:\n");
+  fprintf(stderr, "  -t, --no-transforms  do not process HEIF image transformations\n");
+  fprintf(stderr, "  -h, --help           show help\n");
+}
+
 int main(int argc, char** argv)
 {
   SetTraceLogLevel(LOG_ERROR);
 
-  const char* input_filename = argv[1];
+  while (true) {
+    int option_index = 0;
+    int c = getopt_long(argc, argv, "th", long_options, &option_index);
+    if (c == -1)
+      break;
+
+    switch (c) {
+      case 't':
+        process_transformations = false;
+        break;
+      case 'h':
+        show_help(argv[0]);
+        return 0;
+    }
+  }
+
+  if (optind != argc - 1) {
+    show_help(argv[0]);
+    return 0;
+  }
+
+  const char* input_filename = argv[optind];
 
   ctx = heif_context_alloc();
 
