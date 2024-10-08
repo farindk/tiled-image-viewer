@@ -1,4 +1,4 @@
-# tiled-image-viewer
+# Tiled HEIF Image Viewer
 Viewer for tiled HEIF images.
 
 ![image](https://github.com/user-attachments/assets/979c74af-b59c-4bec-8edd-16f8752c7b47)
