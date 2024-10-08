@@ -134,9 +134,17 @@ int main(int argc, char** argv)
 
   const char* input_filename = argv[1];
 
+  ctx = heif_context_alloc();
+
+  // --- remove security limit to be able to load extremely large 'grid' images
+
+  heif_security_limits* limits = heif_context_get_security_limits(ctx);
+  limits->max_children_per_box = 0;
+
+  // --- load and parse input file
+
   printf("loading ...\n");
 
-  ctx = heif_context_alloc();
   heif_error err = heif_context_read_from_file(ctx, input_filename, nullptr);
   if (err.code) {
     fprintf(stderr, "Cannot load file: %s\n", err.message);
@@ -145,7 +153,7 @@ int main(int argc, char** argv)
 
   printf("loading finished\n");
 
-  // get the ID of the primary image
+  // --- get the ID of the primary image
 
   heif_item_id  primary_id;
   err = heif_context_get_primary_image_ID(ctx, &primary_id);
@@ -155,7 +163,7 @@ int main(int argc, char** argv)
   }
 
 
-  // Load multi-resolution pyramid if there is one.
+  // --- Load multi-resolution pyramid if there is one.
 
   int nGroups;
   struct heif_entity_group* groups = heif_context_get_entity_groups(ctx, heif_fourcc('p', 'y', 'm', 'd'), primary_id, &nGroups);
@@ -180,6 +188,9 @@ int main(int argc, char** argv)
   }
   heif_entity_groups_release(groups, nGroups);
 
+
+  // --- Get tiling information for active layer
+
   heif_image_handle_get_image_tiling(pymd_layer_handles[active_layer], process_transformations, &tiling);
   tile_width = (int)tiling.tile_width;
   tile_height = (int)tiling.tile_height;
@@ -187,6 +198,8 @@ int main(int argc, char** argv)
   printf("tilesize: %u x %u\n", tiling.tile_width, tiling.tile_height);
   printf("tiles: %u x %u\n", tiling.num_columns, tiling.num_rows);
 
+
+  // --- Display image and interaction loop
 
   InitWindow(window_width, window_height, "libheif-viewer");
   int x00 = 0, y00 = 0;
