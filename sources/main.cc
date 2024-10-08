@@ -38,7 +38,7 @@ bool process_transformations = true;
 enum class tile_state
 {
   loading,
-  waiting_for_texture_load,
+  waiting_for_texture_upload,
   ready
 };
 
@@ -116,7 +116,7 @@ void load_tile(int tx, int ty, int layer)
   tilemutex.lock();
   for (auto& tile : tiles) {
     if (tile.x == tx && tile.y == ty && tile.layer == layer) {
-      tile.state = tile_state::waiting_for_texture_load;
+      tile.state = tile_state::waiting_for_texture_upload;
       tile.image = image;
       break;
     }
@@ -292,7 +292,7 @@ int main(int argc, char** argv)
               DrawTexture(tiles[i].texture, tx * tile_width - x0, ty * tile_height - y0, WHITE);
               move_tile_to_front_of_lru_cache(i);
             }
-            else if (tiles[i].state == tile_state::waiting_for_texture_load) {
+            else if (tiles[i].state == tile_state::waiting_for_texture_upload) {
               tiles[i].texture = LoadTextureFromImage(tiles[i].image);
               UnloadImage(tiles[i].image);
               tiles[i].state = tile_state::ready;
@@ -311,7 +311,7 @@ int main(int argc, char** argv)
             if (tiles.back().state == tile_state::ready) {
               UnloadTexture(tiles.back().texture);
             }
-            if (tiles.back().state == tile_state::waiting_for_texture_load) {
+            if (tiles.back().state == tile_state::waiting_for_texture_upload) {
               UnloadImage(tiles.back().image);
             }
 
