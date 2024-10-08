@@ -138,8 +138,8 @@ static struct option long_options[] = {
 
 void show_help(const char* argv0)
 {
-  fprintf(stderr, " tiled-image-viewer      Dirk Farin\n");
-  fprintf(stderr, "------------------------------------\n");
+  fprintf(stderr, " tiled-image-viewer      (c) Dirk Farin\n");
+  fprintf(stderr, "----------------------------------------\n");
   fprintf(stderr, "usage: tiled-image-viewer [options] image.heif\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "options:\n");
@@ -241,7 +241,7 @@ int main(int argc, char** argv)
 
   // --- Display image and interaction loop
 
-  InitWindow(window_width, window_height, "libheif-viewer");
+  InitWindow(window_width, window_height, "Tiled HEIF Image Viewer    (c) Dirk Farin");
   int x00 = 0, y00 = 0;
   int mx = 0, my = 0;
   int dx = 0, dy = 0;
