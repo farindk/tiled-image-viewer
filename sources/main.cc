@@ -178,8 +178,8 @@ int main(int argc, char** argv)
 
   // --- remove security limit to be able to load extremely large 'grid' images
 
-  heif_security_limits* limits = heif_context_get_security_limits(ctx);
-  limits->max_children_per_box = 0;
+  const heif_security_limits* no_limits = heif_get_disabled_security_limits();
+  heif_context_set_security_limits(ctx, no_limits);
 
   // --- load and parse input file
 
