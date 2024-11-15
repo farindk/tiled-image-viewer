@@ -19,4 +19,6 @@ Pan with the mouse. If the image has a multi-resolution `pymd` pyramid group, yo
 | Mandelbrot B | 65536x65536 | 304 MB | `grid`/HEVC pyramid | [link](https://cloud.dirk-farin.de/s/3XzFPxfw9GPNrxK) |
 | Mandelbrot C | 262144x261120 | 1.9 GB | `tili`/AV1 pyramid | [link](https://cloud.dirk-farin.de/s/nNokX7TQ7W63fkH) |
 
+Note: these images are not up-to-date with the latest specification version. They store the tile properties directly in the `tili` image item instead of children of `tilC`.
+
 The aerial images were generated from the [SpaceNet datasets](https://spacenet.ai/).
