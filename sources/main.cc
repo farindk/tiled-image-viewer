@@ -193,24 +193,21 @@ int main(int argc, char** argv)
 
   printf("loading ...\n");
 
-  HttpReader* http_ctx = nullptr;
+  HttpReader http_reader;
   heif_error err;
 
   if (use_url_mode) {
-    http_ctx = new HttpReader();
-    if (!http_ctx->init(input_filename)) {
+    if (!http_reader.init(input_filename)) {
       fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
-      delete http_ctx;
       exit(10);
     }
-    err = heif_context_read_from_reader(ctx, http_ctx->get_heif_reader(), http_ctx->get_callback_user_data(), nullptr);
+    err = heif_context_read_from_reader(ctx, http_reader.get_heif_reader(), http_reader.get_callback_user_data(), nullptr);
   } else {
     err = heif_context_read_from_file(ctx, input_filename, nullptr);
   }
 
   if (err.code) {
     fprintf(stderr, "Cannot load file: %s\n", err.message);
-    delete http_ctx;
     exit(10);
   }
 
@@ -397,17 +394,17 @@ int main(int argc, char** argv)
     tilemutex.unlock();
 
     // --- Draw HTTP download progress bar (only in URL mode)
-    if (http_ctx) {
+    if (use_url_mode) {
       const int bar_height = 16;
       const int bar_y = 0;
 
-      int64_t file_size = http_ctx->get_file_size();
+      int64_t file_size = http_reader.get_file_size();
       if (file_size > 0) {
         // Draw red background (not downloaded)
         DrawRectangle(0, bar_y, window_width, bar_height, RED);
 
         // Draw green for downloaded ranges
-        auto ranges = http_ctx->get_cached_ranges();
+        auto ranges = http_reader.get_cached_ranges();
         for (const auto& r : ranges) {
           int x_start = (int)((r.start * window_width) / file_size);
           int x_end = (int)(((r.start + r.size) * window_width) / file_size);
@@ -420,8 +417,6 @@ int main(int argc, char** argv)
   }
 
   CloseWindow();
-
-  delete http_ctx;
 
   heif_context_free(ctx);
 
