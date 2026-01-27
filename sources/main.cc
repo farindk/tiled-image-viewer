@@ -28,6 +28,7 @@
 #include <cstring>
 #include <cassert>
 #include <getopt.h>
+#include "http_reader.h"
 
 
 int window_width = 2000;
@@ -131,9 +132,10 @@ void load_tile(int tx, int ty, int layer)
 
 
 static struct option long_options[] = {
-    {(char* const) "--no-transforms", no_argument, 0, 't'},
-    {(char* const) "help",            no_argument, 0, 'h'},
-    {0, 0,                                         0, 0}
+    {(char* const) "no-transforms", no_argument, 0, 't'},
+    {(char* const) "url",           no_argument, 0, 'u'},
+    {(char* const) "help",          no_argument, 0, 'h'},
+    {0, 0,                                       0, 0}
 };
 
 void show_help(const char* argv0)
@@ -144,6 +146,7 @@ void show_help(const char* argv0)
   fprintf(stderr, "\n");
   fprintf(stderr, "options:\n");
   fprintf(stderr, "  -t, --no-transforms  do not process HEIF image transformations\n");
+  fprintf(stderr, "  -u, --url            treat input as HTTP/HTTPS URL\n");
   fprintf(stderr, "  -h, --help           show help\n");
 }
 
@@ -151,15 +154,20 @@ int main(int argc, char** argv)
 {
   SetTraceLogLevel(LOG_ERROR);
 
+  bool use_url_mode = false;
+
   while (true) {
     int option_index = 0;
-    int c = getopt_long(argc, argv, "th", long_options, &option_index);
+    int c = getopt_long(argc, argv, "tuh", long_options, &option_index);
     if (c == -1)
       break;
 
     switch (c) {
       case 't':
         process_transformations = false;
+        break;
+      case 'u':
+        use_url_mode = true;
         break;
       case 'h':
         show_help(argv[0]);
@@ -185,9 +193,27 @@ int main(int argc, char** argv)
 
   printf("loading ...\n");
 
-  heif_error err = heif_context_read_from_file(ctx, input_filename, nullptr);
+  HttpReader* http_ctx = nullptr;
+  heif_error err;
+
+  if (use_url_mode) {
+    http_ctx = new HttpReader();
+    if (!http_reader_init(http_ctx, input_filename)) {
+      fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
+      delete http_ctx;
+      exit(10);
+    }
+    err = heif_context_read_from_reader(ctx, get_http_reader(), http_ctx, nullptr);
+  } else {
+    err = heif_context_read_from_file(ctx, input_filename, nullptr);
+  }
+
   if (err.code) {
     fprintf(stderr, "Cannot load file: %s\n", err.message);
+    if (http_ctx) {
+      http_reader_cleanup(http_ctx);
+      delete http_ctx;
+    }
     exit(10);
   }
 
@@ -377,6 +403,11 @@ int main(int argc, char** argv)
   }
 
   CloseWindow();
+
+  if (http_ctx) {
+    http_reader_cleanup(http_ctx);
+    delete http_ctx;
+  }
 
   heif_context_free(ctx);
 
