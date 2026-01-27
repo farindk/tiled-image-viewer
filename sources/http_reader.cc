@@ -78,7 +78,7 @@ bool HttpReaderImpl::fetch_range(uint64_t start, uint64_t end, std::vector<uint8
   return true;
 }
 
-// --- heif_reader callbacks ---
+// --- heif_reader callbacks (userdata is HttpReaderImpl*) ---
 
 static int64_t cb_get_position(void* userdata)
 {
@@ -223,25 +223,21 @@ static void cb_release_error_msg(const char* msg)
   (void)msg;
 }
 
-// --- Static heif_reader struct ---
-
-static struct heif_reader s_heif_reader = {
-  .reader_api_version = 2,
-  .get_position = cb_get_position,
-  .read = cb_read,
-  .seek = cb_seek,
-  .wait_for_file_size = cb_wait_for_file_size,
-  .request_range = cb_request_range,
-  .preload_range_hint = nullptr,
-  .release_file_range = cb_release_file_range,
-  .release_error_msg = cb_release_error_msg
-};
-
 // --- HttpReader class implementation ---
 
 HttpReader::HttpReader()
   : m_impl(std::make_unique<HttpReaderImpl>())
 {
+  // Initialize heif_reader struct for this instance
+  m_heif_reader.reader_api_version = 2;
+  m_heif_reader.get_position = cb_get_position;
+  m_heif_reader.read = cb_read;
+  m_heif_reader.seek = cb_seek;
+  m_heif_reader.wait_for_file_size = cb_wait_for_file_size;
+  m_heif_reader.request_range = cb_request_range;
+  m_heif_reader.preload_range_hint = nullptr;
+  m_heif_reader.release_file_range = cb_release_file_range;
+  m_heif_reader.release_error_msg = cb_release_error_msg;
 }
 
 HttpReader::~HttpReader()
@@ -311,9 +307,14 @@ void HttpReader::cleanup()
   }
 }
 
-const heif_reader* HttpReader::get_heif_reader()
+const heif_reader* HttpReader::get_heif_reader() const
 {
-  return &s_heif_reader;
+  return &m_heif_reader;
+}
+
+void* HttpReader::get_callback_user_data() const
+{
+  return m_impl.get();
 }
 
 int64_t HttpReader::get_file_size() const

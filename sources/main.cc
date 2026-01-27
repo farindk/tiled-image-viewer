@@ -203,7 +203,7 @@ int main(int argc, char** argv)
       delete http_ctx;
       exit(10);
     }
-    err = heif_context_read_from_reader(ctx, HttpReader::get_heif_reader(), http_ctx->impl(), nullptr);
+    err = heif_context_read_from_reader(ctx, http_ctx->get_heif_reader(), http_ctx->get_callback_user_data(), nullptr);
   } else {
     err = heif_context_read_from_file(ctx, input_filename, nullptr);
   }

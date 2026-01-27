@@ -39,8 +39,11 @@ public:
   // Cleanup resources
   void cleanup();
 
-  // Get the heif_reader struct for HTTP access
-  static const heif_reader* get_heif_reader();
+  // Get the heif_reader struct for HTTP access (instance-specific)
+  const heif_reader* get_heif_reader() const;
+
+  // Get userdata pointer for heif_reader callbacks
+  void* get_callback_user_data() const;
 
   // Get file size for visualization
   int64_t get_file_size() const;
@@ -48,11 +51,9 @@ public:
   // Get a snapshot of cached ranges for visualization (thread-safe)
   std::vector<RangeInfo> get_cached_ranges() const;
 
-  // Get the implementation pointer (for heif_reader callbacks)
-  HttpReaderImpl* impl() { return m_impl.get(); }
-
 private:
   std::unique_ptr<HttpReaderImpl> m_impl;
+  heif_reader m_heif_reader;
 };
 
 #endif
