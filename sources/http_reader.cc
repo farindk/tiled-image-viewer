@@ -283,3 +283,20 @@ const heif_reader* get_http_reader()
 {
   return &http_reader;
 }
+
+int64_t http_reader_get_file_size(HttpReader* ctx)
+{
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  return ctx->file_size;
+}
+
+std::vector<RangeInfo> http_reader_get_cached_ranges(HttpReader* ctx)
+{
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  std::vector<RangeInfo> ranges;
+  ranges.reserve(ctx->cache.size());
+  for (const auto& r : ctx->cache) {
+    ranges.push_back({r.start, r.data.size()});
+  }
+  return ranges;
+}

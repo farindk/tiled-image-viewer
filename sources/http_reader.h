@@ -20,6 +20,12 @@ struct CachedRange {
   std::vector<uint8_t> data;
 };
 
+// Lightweight range info for visualization (without data)
+struct RangeInfo {
+  uint64_t start;
+  uint64_t size;
+};
+
 struct HttpReader {
   std::string url;
   int64_t file_size = -1;
@@ -38,5 +44,11 @@ void http_reader_cleanup(HttpReader* ctx);
 
 // Get the heif_reader struct for HTTP access
 const heif_reader* get_http_reader();
+
+// Get file size for visualization
+int64_t http_reader_get_file_size(HttpReader* ctx);
+
+// Get a snapshot of cached ranges for visualization (thread-safe)
+std::vector<RangeInfo> http_reader_get_cached_ranges(HttpReader* ctx);
 
 #endif

@@ -399,6 +399,26 @@ int main(int argc, char** argv)
     }
     tilemutex.unlock();
 
+    // --- Draw HTTP download progress bar (only in URL mode)
+    if (http_ctx) {
+      const int bar_height = 16;
+      const int bar_y = 0;
+
+      int64_t file_size = http_reader_get_file_size(http_ctx);
+      if (file_size > 0) {
+        // Draw red background (not downloaded)
+        DrawRectangle(0, bar_y, window_width, bar_height, RED);
+
+        // Draw green for downloaded ranges
+        auto ranges = http_reader_get_cached_ranges(http_ctx);
+        for (const auto& r : ranges) {
+          int x_start = (int)((r.start * window_width) / file_size);
+          int x_end = (int)(((r.start + r.size) * window_width) / file_size);
+          DrawRectangle(x_start, bar_y, x_end - x_start, bar_height, GREEN);
+        }
+      }
+    }
+
     EndDrawing();
   }
 
