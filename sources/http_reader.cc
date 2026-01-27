@@ -1,7 +1,7 @@
 /*
  * HTTP Range Request Reader for libheif
  *
- * Copyright (c) 2026 Dirk Farin <dirk.farin@gmail.com>
+ * Copyright (c) 2024 Dirk Farin <dirk.farin@gmail.com>
  *
  * This file is part of Tiled-Image-Viewer.
  */
@@ -11,10 +11,30 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
+
+// --- Implementation struct (PIMPL) ---
+
+struct CachedRange {
+  uint64_t start;
+  std::vector<uint8_t> data;
+};
+
+struct HttpReaderImpl {
+  std::string url;
+  int64_t file_size = -1;
+  int64_t current_position = 0;
+  void* curl_handle = nullptr;
+  std::vector<CachedRange> cache;
+  mutable std::mutex mutex;
+  std::string last_error;
+
+  bool fetch_range(uint64_t start, uint64_t end, std::vector<uint8_t>& out_data);
+};
 
 // --- CURL write callback ---
 
-static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp)
+static size_t http_curl_write_callback(void* contents, size_t size, size_t nmemb, void* userp)
 {
   size_t total_size = size * nmemb;
   std::vector<uint8_t>* buffer = static_cast<std::vector<uint8_t>*>(userp);
@@ -23,13 +43,13 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
   return total_size;
 }
 
-// --- Helper to fetch a range from URL ---
+// --- HttpReaderImpl helper ---
 
-static bool fetch_range(HttpReader* ctx, uint64_t start, uint64_t end, std::vector<uint8_t>& out_data)
+bool HttpReaderImpl::fetch_range(uint64_t start, uint64_t end, std::vector<uint8_t>& out_data)
 {
-  CURL* curl = static_cast<CURL*>(ctx->curl_handle);
+  CURL* curl = static_cast<CURL*>(curl_handle);
   if (!curl) {
-    ctx->last_error = "CURL handle not initialized";
+    last_error = "CURL handle not initialized";
     return false;
   }
 
@@ -38,9 +58,9 @@ static bool fetch_range(HttpReader* ctx, uint64_t start, uint64_t end, std::vect
   char range_str[64];
   snprintf(range_str, sizeof(range_str), "%lu-%lu", (unsigned long)start, (unsigned long)end);
 
-  curl_easy_setopt(curl, CURLOPT_URL, ctx->url.c_str());
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_RANGE, range_str);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, http_curl_write_callback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out_data);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
@@ -51,7 +71,7 @@ static bool fetch_range(HttpReader* ctx, uint64_t start, uint64_t end, std::vect
   curl_easy_setopt(curl, CURLOPT_RANGE, nullptr);
 
   if (res != CURLE_OK) {
-    ctx->last_error = curl_easy_strerror(res);
+    last_error = curl_easy_strerror(res);
     return false;
   }
 
@@ -60,31 +80,31 @@ static bool fetch_range(HttpReader* ctx, uint64_t start, uint64_t end, std::vect
 
 // --- heif_reader callbacks ---
 
-static int64_t http_get_position(void* userdata)
+static int64_t cb_get_position(void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
-  return ctx->current_position;
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
+  return impl->current_position;
 }
 
-static int http_read(void* data, size_t size, void* userdata)
+static int cb_read(void* data, size_t size, void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
 
-  if (ctx->current_position + (int64_t)size > ctx->file_size) {
+  if (impl->current_position + (int64_t)size > impl->file_size) {
     return heif_reader_grow_status_size_beyond_eof;
   }
 
   uint8_t* out = static_cast<uint8_t*>(data);
   size_t remaining = size;
-  uint64_t pos = ctx->current_position;
+  uint64_t pos = impl->current_position;
 
   while (remaining > 0) {
     bool found = false;
 
     // Search in cache
-    for (auto& range : ctx->cache) {
+    for (auto& range : impl->cache) {
       if (pos >= range.start && pos < range.start + range.data.size()) {
         uint64_t offset_in_range = pos - range.start;
         size_t available = range.data.size() - offset_in_range;
@@ -102,52 +122,52 @@ static int http_read(void* data, size_t size, void* userdata)
     if (!found) {
       // Fetch missing data - fetch a reasonable chunk
       uint64_t fetch_start = pos;
-      uint64_t fetch_end = std::min(pos + 65536 - 1, (uint64_t)(ctx->file_size - 1));
+      uint64_t fetch_end = std::min(pos + 65536 - 1, (uint64_t)(impl->file_size - 1));
 
       std::vector<uint8_t> fetched_data;
-      if (!fetch_range(ctx, fetch_start, fetch_end, fetched_data)) {
+      if (!impl->fetch_range(fetch_start, fetch_end, fetched_data)) {
         return heif_reader_grow_status_size_beyond_eof;
       }
 
       CachedRange new_range;
       new_range.start = fetch_start;
       new_range.data = std::move(fetched_data);
-      ctx->cache.push_back(std::move(new_range));
+      impl->cache.push_back(std::move(new_range));
     }
   }
 
-  ctx->current_position = pos;
+  impl->current_position = pos;
   return heif_reader_grow_status_size_reached;
 }
 
-static int http_seek(int64_t position, void* userdata)
+static int cb_seek(int64_t position, void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
 
-  if (position < 0 || position > ctx->file_size) {
+  if (position < 0 || position > impl->file_size) {
     return -1;
   }
 
-  ctx->current_position = position;
+  impl->current_position = position;
   return 0;
 }
 
-static enum heif_reader_grow_status http_wait_for_file_size(int64_t target_size, void* userdata)
+static enum heif_reader_grow_status cb_wait_for_file_size(int64_t target_size, void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
 
-  if (target_size <= ctx->file_size) {
+  if (target_size <= impl->file_size) {
     return heif_reader_grow_status_size_reached;
   }
   return heif_reader_grow_status_size_beyond_eof;
 }
 
-static struct heif_reader_range_request_result http_request_range(uint64_t start, uint64_t end, void* userdata)
+static struct heif_reader_range_request_result cb_request_range(uint64_t start, uint64_t end, void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
 
   struct heif_reader_range_request_result result;
   result.reader_error_code = 0;
@@ -159,7 +179,7 @@ static struct heif_reader_range_request_result http_request_range(uint64_t start
   uint64_t last_byte = end > 0 ? end - 1 : 0;
 
   // Check if already in cache
-  for (auto& range : ctx->cache) {
+  for (auto& range : impl->cache) {
     if (start >= range.start && last_byte < range.start + range.data.size()) {
       // Already cached
       return result;
@@ -168,7 +188,7 @@ static struct heif_reader_range_request_result http_request_range(uint64_t start
 
   // Fetch the range (curl uses inclusive end)
   std::vector<uint8_t> fetched_data;
-  if (!fetch_range(ctx, start, last_byte, fetched_data)) {
+  if (!impl->fetch_range(start, last_byte, fetched_data)) {
     result.status = heif_reader_grow_status_error;
     result.reader_error_code = 1;
     return result;
@@ -177,27 +197,27 @@ static struct heif_reader_range_request_result http_request_range(uint64_t start
   CachedRange new_range;
   new_range.start = start;
   new_range.data = std::move(fetched_data);
-  ctx->cache.push_back(std::move(new_range));
+  impl->cache.push_back(std::move(new_range));
 
   return result;
 }
 
-static void http_release_file_range(uint64_t start, uint64_t end, void* userdata)
+static void cb_release_file_range(uint64_t start, uint64_t end, void* userdata)
 {
-  HttpReader* ctx = static_cast<HttpReader*>(userdata);
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
+  std::lock_guard<std::mutex> lock(impl->mutex);
 
   // Remove cached ranges that fall within the specified range
-  ctx->cache.erase(
-    std::remove_if(ctx->cache.begin(), ctx->cache.end(),
+  impl->cache.erase(
+    std::remove_if(impl->cache.begin(), impl->cache.end(),
       [start, end](const CachedRange& r) {
         return r.start >= start && r.start + r.data.size() - 1 <= end;
       }),
-    ctx->cache.end()
+    impl->cache.end()
   );
 }
 
-static void http_release_error_msg(const char* msg)
+static void cb_release_error_msg(const char* msg)
 {
   // No-op: we use std::string internally
   (void)msg;
@@ -205,36 +225,46 @@ static void http_release_error_msg(const char* msg)
 
 // --- Static heif_reader struct ---
 
-static struct heif_reader http_reader = {
+static struct heif_reader s_heif_reader = {
   .reader_api_version = 2,
-  .get_position = http_get_position,
-  .read = http_read,
-  .seek = http_seek,
-  .wait_for_file_size = http_wait_for_file_size,
-  .request_range = http_request_range,
+  .get_position = cb_get_position,
+  .read = cb_read,
+  .seek = cb_seek,
+  .wait_for_file_size = cb_wait_for_file_size,
+  .request_range = cb_request_range,
   .preload_range_hint = nullptr,
-  .release_file_range = http_release_file_range,
-  .release_error_msg = http_release_error_msg
+  .release_file_range = cb_release_file_range,
+  .release_error_msg = cb_release_error_msg
 };
 
-// --- Public interface ---
+// --- HttpReader class implementation ---
 
-bool http_reader_init(HttpReader* ctx, const char* url)
+HttpReader::HttpReader()
+  : m_impl(std::make_unique<HttpReaderImpl>())
 {
-  ctx->url = url;
-  ctx->file_size = -1;
-  ctx->current_position = 0;
-  ctx->cache.clear();
-  ctx->last_error.clear();
+}
+
+HttpReader::~HttpReader()
+{
+  cleanup();
+}
+
+bool HttpReader::init(const char* url)
+{
+  m_impl->url = url;
+  m_impl->file_size = -1;
+  m_impl->current_position = 0;
+  m_impl->cache.clear();
+  m_impl->last_error.clear();
 
   // Initialize CURL
-  ctx->curl_handle = curl_easy_init();
-  if (!ctx->curl_handle) {
-    ctx->last_error = "Failed to initialize CURL";
+  m_impl->curl_handle = curl_easy_init();
+  if (!m_impl->curl_handle) {
+    m_impl->last_error = "Failed to initialize CURL";
     return false;
   }
 
-  CURL* curl = static_cast<CURL*>(ctx->curl_handle);
+  CURL* curl = static_cast<CURL*>(m_impl->curl_handle);
 
   // Perform HEAD request to get file size
   curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -244,9 +274,9 @@ bool http_reader_init(HttpReader* ctx, const char* url)
 
   CURLcode res = curl_easy_perform(curl);
   if (res != CURLE_OK) {
-    ctx->last_error = curl_easy_strerror(res);
+    m_impl->last_error = curl_easy_strerror(res);
     curl_easy_cleanup(curl);
-    ctx->curl_handle = nullptr;
+    m_impl->curl_handle = nullptr;
     return false;
   }
 
@@ -254,48 +284,50 @@ bool http_reader_init(HttpReader* ctx, const char* url)
   curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
 
   if (content_length <= 0) {
-    ctx->last_error = "Could not determine file size (server may not support range requests)";
+    m_impl->last_error = "Could not determine file size (server may not support range requests)";
     curl_easy_cleanup(curl);
-    ctx->curl_handle = nullptr;
+    m_impl->curl_handle = nullptr;
     return false;
   }
 
-  ctx->file_size = content_length;
+  m_impl->file_size = content_length;
 
   // Reset NOBODY for subsequent requests
   curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
 
-  printf("HTTP: File size is %ld bytes\n", (long)ctx->file_size);
+  printf("HTTP: File size is %ld bytes\n", (long)m_impl->file_size);
 
   return true;
 }
 
-void http_reader_cleanup(HttpReader* ctx)
+void HttpReader::cleanup()
 {
-  if (ctx->curl_handle) {
-    curl_easy_cleanup(static_cast<CURL*>(ctx->curl_handle));
-    ctx->curl_handle = nullptr;
+  if (m_impl && m_impl->curl_handle) {
+    curl_easy_cleanup(static_cast<CURL*>(m_impl->curl_handle));
+    m_impl->curl_handle = nullptr;
   }
-  ctx->cache.clear();
+  if (m_impl) {
+    m_impl->cache.clear();
+  }
 }
 
-const heif_reader* get_http_reader()
+const heif_reader* HttpReader::get_heif_reader()
 {
-  return &http_reader;
+  return &s_heif_reader;
 }
 
-int64_t http_reader_get_file_size(HttpReader* ctx)
+int64_t HttpReader::get_file_size() const
 {
-  std::lock_guard<std::mutex> lock(ctx->mutex);
-  return ctx->file_size;
+  std::lock_guard<std::mutex> lock(m_impl->mutex);
+  return m_impl->file_size;
 }
 
-std::vector<RangeInfo> http_reader_get_cached_ranges(HttpReader* ctx)
+std::vector<RangeInfo> HttpReader::get_cached_ranges() const
 {
-  std::lock_guard<std::mutex> lock(ctx->mutex);
+  std::lock_guard<std::mutex> lock(m_impl->mutex);
   std::vector<RangeInfo> ranges;
-  ranges.reserve(ctx->cache.size());
-  for (const auto& r : ctx->cache) {
+  ranges.reserve(m_impl->cache.size());
+  for (const auto& r : m_impl->cache) {
     ranges.push_back({r.start, r.data.size()});
   }
   return ranges;

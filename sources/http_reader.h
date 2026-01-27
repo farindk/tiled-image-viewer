@@ -12,13 +12,8 @@
 #include <libheif/heif.h>
 #include <string>
 #include <vector>
-#include <mutex>
+#include <memory>
 #include <cstdint>
-
-struct CachedRange {
-  uint64_t start;
-  std::vector<uint8_t> data;
-};
 
 // Lightweight range info for visualization (without data)
 struct RangeInfo {
@@ -26,29 +21,38 @@ struct RangeInfo {
   uint64_t size;
 };
 
-struct HttpReader {
-  std::string url;
-  int64_t file_size = -1;
-  int64_t current_position = 0;
-  void* curl_handle = nullptr;
-  std::vector<CachedRange> cache;
-  std::mutex mutex;
-  std::string last_error;
+// Forward declaration of implementation
+struct HttpReaderImpl;
+
+class HttpReader {
+public:
+  HttpReader();
+  ~HttpReader();
+
+  // Non-copyable
+  HttpReader(const HttpReader&) = delete;
+  HttpReader& operator=(const HttpReader&) = delete;
+
+  // Initialize with URL (performs HEAD request to get file size)
+  bool init(const char* url);
+
+  // Cleanup resources
+  void cleanup();
+
+  // Get the heif_reader struct for HTTP access
+  static const heif_reader* get_heif_reader();
+
+  // Get file size for visualization
+  int64_t get_file_size() const;
+
+  // Get a snapshot of cached ranges for visualization (thread-safe)
+  std::vector<RangeInfo> get_cached_ranges() const;
+
+  // Get the implementation pointer (for heif_reader callbacks)
+  HttpReaderImpl* impl() { return m_impl.get(); }
+
+private:
+  std::unique_ptr<HttpReaderImpl> m_impl;
 };
-
-// Initialize context with URL (performs HEAD request to get file size)
-bool http_reader_init(HttpReader* ctx, const char* url);
-
-// Cleanup resources
-void http_reader_cleanup(HttpReader* ctx);
-
-// Get the heif_reader struct for HTTP access
-const heif_reader* get_http_reader();
-
-// Get file size for visualization
-int64_t http_reader_get_file_size(HttpReader* ctx);
-
-// Get a snapshot of cached ranges for visualization (thread-safe)
-std::vector<RangeInfo> http_reader_get_cached_ranges(HttpReader* ctx);
 
 #endif

@@ -198,22 +198,19 @@ int main(int argc, char** argv)
 
   if (use_url_mode) {
     http_ctx = new HttpReader();
-    if (!http_reader_init(http_ctx, input_filename)) {
+    if (!http_ctx->init(input_filename)) {
       fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
       delete http_ctx;
       exit(10);
     }
-    err = heif_context_read_from_reader(ctx, get_http_reader(), http_ctx, nullptr);
+    err = heif_context_read_from_reader(ctx, HttpReader::get_heif_reader(), http_ctx->impl(), nullptr);
   } else {
     err = heif_context_read_from_file(ctx, input_filename, nullptr);
   }
 
   if (err.code) {
     fprintf(stderr, "Cannot load file: %s\n", err.message);
-    if (http_ctx) {
-      http_reader_cleanup(http_ctx);
-      delete http_ctx;
-    }
+    delete http_ctx;
     exit(10);
   }
 
@@ -404,13 +401,13 @@ int main(int argc, char** argv)
       const int bar_height = 16;
       const int bar_y = 0;
 
-      int64_t file_size = http_reader_get_file_size(http_ctx);
+      int64_t file_size = http_ctx->get_file_size();
       if (file_size > 0) {
         // Draw red background (not downloaded)
         DrawRectangle(0, bar_y, window_width, bar_height, RED);
 
         // Draw green for downloaded ranges
-        auto ranges = http_reader_get_cached_ranges(http_ctx);
+        auto ranges = http_ctx->get_cached_ranges();
         for (const auto& r : ranges) {
           int x_start = (int)((r.start * window_width) / file_size);
           int x_end = (int)(((r.start + r.size) * window_width) / file_size);
@@ -424,10 +421,7 @@ int main(int argc, char** argv)
 
   CloseWindow();
 
-  if (http_ctx) {
-    http_reader_cleanup(http_ctx);
-    delete http_ctx;
-  }
+  delete http_ctx;
 
   heif_context_free(ctx);
 
