@@ -134,6 +134,7 @@ void load_tile(int tx, int ty, int layer)
 static struct option long_options[] = {
     {(char* const) "no-transforms", no_argument, 0, 't'},
     {(char* const) "url",           no_argument, 0, 'u'},
+    {(char* const) "primary",       no_argument, 0, 'p'},
     {(char* const) "help",          no_argument, 0, 'h'},
     {0, 0,                                       0, 0}
 };
@@ -147,6 +148,7 @@ void show_help(const char* argv0)
   fprintf(stderr, "options:\n");
   fprintf(stderr, "  -t, --no-transforms  do not process HEIF image transformations\n");
   fprintf(stderr, "  -u, --url            treat input as HTTP/HTTPS URL\n");
+  fprintf(stderr, "  -p, --primary        start with primary image (if not give, start at overview image)\n");
   fprintf(stderr, "  -h, --help           show help\n");
 }
 
@@ -155,10 +157,11 @@ int main(int argc, char** argv)
   SetTraceLogLevel(LOG_ERROR);
 
   bool use_url_mode = false;
+  bool start_at_primary = false;
 
   while (true) {
     int option_index = 0;
-    int c = getopt_long(argc, argv, "tuh", long_options, &option_index);
+    int c = getopt_long(argc, argv, "tuph", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -168,6 +171,9 @@ int main(int argc, char** argv)
         break;
       case 'u':
         use_url_mode = true;
+        break;
+      case 'p':
+        start_at_primary = true;
         break;
       case 'h':
         show_help(argv[0]);
@@ -234,9 +240,13 @@ int main(int argc, char** argv)
     for (uint32_t i = 0; i < groups[0].num_entities; i++) {
       uint32_t layer_image_id = groups[0].entities[i];
       heif_context_get_image_handle(ctx, layer_image_id, &pymd_layer_handles[i]);
-      if (layer_image_id == primary_id) {
+      if (start_at_primary && layer_image_id == primary_id) {
         active_layer = i;
       }
+    }
+
+    if (!start_at_primary) {
+      active_layer = 0; // always start at overview layer
     }
   }
   else {
