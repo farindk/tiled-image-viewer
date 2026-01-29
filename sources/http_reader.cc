@@ -1,7 +1,7 @@
 /*
  * HTTP Range Request Reader for libheif
  *
- * Copyright (c) 2024 Dirk Farin <dirk.farin@gmail.com>
+ * Copyright (c) 2026 Dirk Farin <dirk.farin@gmail.com>
  *
  * This file is part of Tiled-Image-Viewer.
  */
