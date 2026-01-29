@@ -55,6 +55,8 @@ bool HttpReaderImpl::fetch_range(uint64_t start, uint64_t end, std::vector<uint8
 
   out_data.clear();
 
+  printf("fetch pos: %d, size: %d\n", start, end-start);
+
   char range_str[64];
   snprintf(range_str, sizeof(range_str), "%lu-%lu", (unsigned long)start, (unsigned long)end);
 
