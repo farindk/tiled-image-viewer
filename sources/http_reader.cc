@@ -12,11 +12,13 @@
 #include <cstdio>
 #include <algorithm>
 #include <mutex>
+#include <cassert>
+
+const uint32_t BLOCK_SIZE = 64*1024;
 
 // --- Implementation struct (PIMPL) ---
 
-struct CachedRange {
-  uint64_t start;
+struct CachedBlock {
   std::vector<uint8_t> data;
 };
 
@@ -25,7 +27,7 @@ struct HttpReaderImpl {
   int64_t file_size = -1;
   int64_t current_position = 0;
   void* curl_handle = nullptr;
-  std::vector<CachedRange> cache;
+  std::vector<CachedBlock> cache;
   mutable std::mutex mutex;
   std::string last_error;
 
@@ -99,29 +101,42 @@ static int cb_read(void* data, size_t size, void* userdata)
   }
 
   uint8_t* out = static_cast<uint8_t*>(data);
-  size_t remaining = size;
+  int remaining = (int)size;
   uint64_t pos = impl->current_position;
 
-  while (remaining > 0) {
-    bool found = false;
+  printf("read from %d, size %d\n", pos, size);
 
-    // Search in cache
-    for (auto& range : impl->cache) {
-      if (pos >= range.start && pos < range.start + range.data.size()) {
-        uint64_t offset_in_range = pos - range.start;
-        size_t available = range.data.size() - offset_in_range;
-        size_t to_copy = std::min(remaining, available);
+  /*while (remaining > 0)*/ {
+    bool found = true;
 
-        memcpy(out, range.data.data() + offset_in_range, to_copy);
-        out += to_copy;
-        pos += to_copy;
-        remaining -= to_copy;
-        found = true;
+    int first_block = pos / BLOCK_SIZE;
+    int last_block = (pos + size - 1) / BLOCK_SIZE;
+    for (int b = first_block; b <= last_block; b++) {
+      if (impl->cache[b].data.empty()) {
+        found = false;
         break;
       }
     }
 
-    if (!found) {
+    if (found) {
+      for (int b = first_block; b <= last_block; b++) {
+        int block_start_pos = b * BLOCK_SIZE;
+        int block_end_pos = block_start_pos + BLOCK_SIZE;
+
+        int max_block_copy = block_end_pos - pos;
+        int to_copy = std::min(remaining, max_block_copy);
+
+        int offset_in_block = pos - block_start_pos;
+
+        printf("copy from block %d, offset %d, size: %d\n", b, offset_in_block, to_copy);
+
+        memcpy(out, impl->cache[b].data.data() + offset_in_block, to_copy);
+        out += to_copy;
+        pos += to_copy;
+        remaining -= to_copy;
+      }
+    }
+    else {
       // Fetch missing data - fetch a reasonable chunk
       uint64_t fetch_start = pos;
       uint64_t fetch_end = std::min(pos + 65536 - 1, (uint64_t)(impl->file_size - 1));
@@ -131,10 +146,12 @@ static int cb_read(void* data, size_t size, void* userdata)
         return heif_reader_grow_status_size_beyond_eof;
       }
 
-      CachedRange new_range;
-      new_range.start = fetch_start;
-      new_range.data = std::move(fetched_data);
-      impl->cache.push_back(std::move(new_range));
+      //CachedRange new_range;
+      //new_range.start = fetch_start;
+      //new_range.data = std::move(fetched_data);
+      //impl->cache.push_back(std::move(new_range));
+
+      assert(false);
     }
   }
 
@@ -180,13 +197,51 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
   // Note: end is exclusive (one byte after last position)
   uint64_t last_byte = end > 0 ? end - 1 : 0;
 
-  // Check if already in cache
-  for (auto& range : impl->cache) {
-    if (start >= range.start && last_byte < range.start + range.data.size()) {
-      // Already cached
-      return result;
+  // Extend to full block
+
+  int start_block = start / BLOCK_SIZE;
+  int last_block = last_byte / BLOCK_SIZE;
+
+  printf("start / last : %d %d\n", start, last_byte);
+  printf("start blk / last blk : %d %d\n", start_block, last_block);
+
+  while (start_block <= last_block) {
+    if (!impl->cache[start_block].data.empty()) {
+      start_block++;
+    }
+    else {
+      break;
     }
   }
+
+  while (start_block <= last_block) {
+    if (!impl->cache[last_block].data.empty()) {
+      last_block--;
+    }
+    else {
+      break;
+    }
+  }
+
+  // Check if already in cache
+  if (start_block > last_block) {
+    return result;
+  }
+
+
+  // Fetch the range
+
+  start = start_block * BLOCK_SIZE;
+  end = last_block * BLOCK_SIZE + BLOCK_SIZE - 1;
+
+  if (end > impl->file_size) {
+    end = impl->file_size;
+  }
+
+  last_byte = end - 1;
+
+  printf("request range: %d - %d\n", start, end);
+
 
   // Fetch the range (curl uses inclusive end)
   std::vector<uint8_t> fetched_data;
@@ -196,10 +251,10 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
     return result;
   }
 
-  CachedRange new_range;
-  new_range.start = start;
-  new_range.data = std::move(fetched_data);
-  impl->cache.push_back(std::move(new_range));
+  for (int block = start_block ; block <= last_block ; block++) {
+    impl->cache[block].data.resize(BLOCK_SIZE);
+    memcpy(impl->cache[block].data.data(), fetched_data.data() + block * BLOCK_SIZE, BLOCK_SIZE);
+  }
 
   return result;
 }
@@ -209,14 +264,16 @@ static void cb_release_file_range(uint64_t start, uint64_t end, void* userdata)
   HttpReaderImpl* impl = static_cast<HttpReaderImpl*>(userdata);
   std::lock_guard<std::mutex> lock(impl->mutex);
 
+#if 0
   // Remove cached ranges that fall within the specified range
   impl->cache.erase(
     std::remove_if(impl->cache.begin(), impl->cache.end(),
-      [start, end](const CachedRange& r) {
+      [start, end](const CachedBlock& r) {
         return r.start >= start && r.start + r.data.size() - 1 <= end;
       }),
     impl->cache.end()
   );
+#endif
 }
 
 static void cb_release_error_msg(const char* msg)
@@ -289,6 +346,7 @@ bool HttpReader::init(const char* url)
   }
 
   m_impl->file_size = content_length;
+  m_impl->cache.resize((content_length + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
   // Reset NOBODY for subsequent requests
   curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
@@ -330,8 +388,19 @@ std::vector<RangeInfo> HttpReader::get_cached_ranges() const
   std::lock_guard<std::mutex> lock(m_impl->mutex);
   std::vector<RangeInfo> ranges;
   ranges.reserve(m_impl->cache.size());
-  for (const auto& r : m_impl->cache) {
-    ranges.push_back({r.start, r.data.size()});
+
+  for (int b=0;b<m_impl->cache.size();b++) {
+    if (!m_impl->cache[b].data.empty()) {
+      ranges.push_back({b*BLOCK_SIZE, BLOCK_SIZE});
+    }
   }
+
+#if 0
+  for (const auto& r : m_impl->cache) {
+    if (!r.data.empty()) {
+      ranges.push_back({r.start, r.data.size()});
+    }
+  }
+#endif
   return ranges;
 }
