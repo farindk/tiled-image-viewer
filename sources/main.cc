@@ -282,7 +282,7 @@ int main(int argc, char** argv)
   while (!WindowShouldClose()) {
 
     BeginDrawing();
-    ClearBackground({0, 0, 0, 255});
+    ClearBackground({50, 50, 50, 255});
 
     // --- Mouse zooming with mouse wheel
 
