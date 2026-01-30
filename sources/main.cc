@@ -137,12 +137,13 @@ void load_tile(int tx, int ty, int layer)
 
 
 static struct option long_options[] = {
-    {(char* const) "no-transforms", no_argument,       0, 't'},
-    {(char* const) "url",           no_argument,       0, 'u'},
-    {(char* const) "primary",       no_argument,       0, 'p'},
-    {(char* const) "block-size",    required_argument, 0, 'b'},
-    {(char* const) "help",          no_argument,       0, 'h'},
-    {0, 0,                                             0, 0}
+    {(char* const) "trivial-reader",  no_argument,       0, 't'},
+    {(char* const) "no-transforms",   no_argument,       0, 'T'},
+    {(char* const) "url",             no_argument,       0, 'u'},
+    {(char* const) "primary",         no_argument,       0, 'p'},
+    {(char* const) "block-size",      required_argument, 0, 'b'},
+    {(char* const) "help",            no_argument,       0, 'h'},
+    {0, 0,                                               0, 0}
 };
 
 void show_help(const char* argv0)
@@ -152,10 +153,11 @@ void show_help(const char* argv0)
   fprintf(stderr, "usage: tiled-image-viewer [options] image.heif\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "options:\n");
-  fprintf(stderr, "  -t, --no-transforms    do not process HEIF image transformations\n");
+  fprintf(stderr, "  -t, --trivial-reader   use trivial cache reader instead of block cache\n");
+  fprintf(stderr, "      --no-transforms    do not process HEIF image transformations\n");
   fprintf(stderr, "  -u, --url              treat input as HTTP/HTTPS URL\n");
-  fprintf(stderr, "  -p, --primary          start with primary image (if not give, start at overview image)\n");
-  fprintf(stderr, "  -b, --block-size <kB>  use block cache reader with specified block size in kB (default: trivial cache)\n");
+  fprintf(stderr, "  -p, --primary          start with primary image (if not given, start at overview image)\n");
+  fprintf(stderr, "  -b, --block-size <kB>  block size in kB for block cache reader (default: 64)\n");
   fprintf(stderr, "  -h, --help             show help\n");
 }
 
@@ -165,7 +167,8 @@ int main(int argc, char** argv)
 
   bool use_url_mode = false;
   bool start_at_primary = false;
-  int block_size_kb = 0;  // 0 means use trivial cache
+  int block_size_kb = 64;  // default: 64KB block cache
+  bool use_trivial_reader = false;
 
   while (true) {
     int option_index = 0;
@@ -175,6 +178,9 @@ int main(int argc, char** argv)
 
     switch (c) {
       case 't':
+        use_trivial_reader = true;
+        break;
+      case 'T':
         process_transformations = false;
         break;
       case 'u':
@@ -221,7 +227,7 @@ int main(int argc, char** argv)
   heif_error err;
 
   if (use_url_mode) {
-    if (block_size_kb > 0) {
+    if (!use_trivial_reader) {
       block_reader = std::make_unique<HttpReader_BlockCache>(block_size_kb * 1024);
       if (!block_reader->init(input_filename)) {
         fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
@@ -303,7 +309,10 @@ int main(int argc, char** argv)
   // --- Display image and interaction loop
 
   InitWindow(window_width, window_height, "Tiled HEIF Image Viewer    (c) Dirk Farin");
-  int x00 = 0, y00 = 0;
+  int image_width = tiling.tile_width * tiling.num_columns;
+  int image_height = tiling.tile_height * tiling.num_rows;
+  int x00 = (image_width - window_width) / 2;
+  int y00 = (image_height - window_height) / 2;
   int mx = 0, my = 0;
   int dx = 0, dy = 0;
   bool mouse_pressed = false;
