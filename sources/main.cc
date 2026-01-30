@@ -28,7 +28,8 @@
 #include <cstring>
 #include <cassert>
 #include <getopt.h>
-#include "http_reader.h"
+#include "http_reader_blockcache.h"
+#include "http_reader_trivialcache.h"
 
 
 int window_width = 2000;
@@ -132,11 +133,12 @@ void load_tile(int tx, int ty, int layer)
 
 
 static struct option long_options[] = {
-    {(char* const) "no-transforms", no_argument, 0, 't'},
-    {(char* const) "url",           no_argument, 0, 'u'},
-    {(char* const) "primary",       no_argument, 0, 'p'},
-    {(char* const) "help",          no_argument, 0, 'h'},
-    {0, 0,                                       0, 0}
+    {(char* const) "no-transforms", no_argument,       0, 't'},
+    {(char* const) "url",           no_argument,       0, 'u'},
+    {(char* const) "primary",       no_argument,       0, 'p'},
+    {(char* const) "block-size",    required_argument, 0, 'b'},
+    {(char* const) "help",          no_argument,       0, 'h'},
+    {0, 0,                                             0, 0}
 };
 
 void show_help(const char* argv0)
@@ -146,10 +148,11 @@ void show_help(const char* argv0)
   fprintf(stderr, "usage: tiled-image-viewer [options] image.heif\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "options:\n");
-  fprintf(stderr, "  -t, --no-transforms  do not process HEIF image transformations\n");
-  fprintf(stderr, "  -u, --url            treat input as HTTP/HTTPS URL\n");
-  fprintf(stderr, "  -p, --primary        start with primary image (if not give, start at overview image)\n");
-  fprintf(stderr, "  -h, --help           show help\n");
+  fprintf(stderr, "  -t, --no-transforms    do not process HEIF image transformations\n");
+  fprintf(stderr, "  -u, --url              treat input as HTTP/HTTPS URL\n");
+  fprintf(stderr, "  -p, --primary          start with primary image (if not give, start at overview image)\n");
+  fprintf(stderr, "  -b, --block-size <kB>  use block cache reader with specified block size in kB (default: trivial cache)\n");
+  fprintf(stderr, "  -h, --help             show help\n");
 }
 
 int main(int argc, char** argv)
@@ -158,10 +161,11 @@ int main(int argc, char** argv)
 
   bool use_url_mode = false;
   bool start_at_primary = false;
+  int block_size_kb = 0;  // 0 means use trivial cache
 
   while (true) {
     int option_index = 0;
-    int c = getopt_long(argc, argv, "tuph", long_options, &option_index);
+    int c = getopt_long(argc, argv, "tupb:h", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -174,6 +178,13 @@ int main(int argc, char** argv)
         break;
       case 'p':
         start_at_primary = true;
+        break;
+      case 'b':
+        block_size_kb = atoi(optarg);
+        if (block_size_kb <= 0) {
+          fprintf(stderr, "Error: block size must be a positive integer\n");
+          return 1;
+        }
         break;
       case 'h':
         show_help(argv[0]);
@@ -199,15 +210,31 @@ int main(int argc, char** argv)
 
   printf("loading ...\n");
 
-  HttpReader http_reader;
+  std::unique_ptr<HttpReader_BlockCache> block_reader;
+  std::unique_ptr<HttpReader_TrivialCache> trivial_reader;
+  const heif_reader* reader = nullptr;
+  void* reader_userdata = nullptr;
   heif_error err;
 
   if (use_url_mode) {
-    if (!http_reader.init(input_filename)) {
-      fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
-      exit(10);
+    if (block_size_kb > 0) {
+      block_reader = std::make_unique<HttpReader_BlockCache>(block_size_kb * 1024);
+      if (!block_reader->init(input_filename)) {
+        fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
+        exit(10);
+      }
+      reader = block_reader->get_heif_reader();
+      reader_userdata = block_reader->get_callback_user_data();
+    } else {
+      trivial_reader = std::make_unique<HttpReader_TrivialCache>();
+      if (!trivial_reader->init(input_filename)) {
+        fprintf(stderr, "Cannot connect to URL: %s\n", input_filename);
+        exit(10);
+      }
+      reader = trivial_reader->get_heif_reader();
+      reader_userdata = trivial_reader->get_callback_user_data();
     }
-    err = heif_context_read_from_reader(ctx, http_reader.get_heif_reader(), http_reader.get_callback_user_data(), nullptr);
+    err = heif_context_read_from_reader(ctx, reader, reader_userdata, nullptr);
   } else {
     err = heif_context_read_from_file(ctx, input_filename, nullptr);
   }
@@ -408,13 +435,13 @@ int main(int argc, char** argv)
       const int bar_height = 16;
       const int bar_y = 0;
 
-      int64_t file_size = http_reader.get_file_size();
+      int64_t file_size = block_reader ? block_reader->get_file_size() : trivial_reader->get_file_size();
       if (file_size > 0) {
         // Draw red background (not downloaded)
         DrawRectangle(0, bar_y, window_width, bar_height, RED);
 
         // Draw green for downloaded ranges
-        auto ranges = http_reader.get_cached_ranges();
+        auto ranges = block_reader ? block_reader->get_cached_ranges() : trivial_reader->get_cached_ranges();
         for (const auto& r : ranges) {
           int x_start = (int)((r.start * window_width) / file_size);
           int x_end = (int)(((r.start + r.size) * window_width) / file_size);
