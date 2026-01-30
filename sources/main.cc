@@ -27,9 +27,11 @@
 #include <mutex>
 #include <cstring>
 #include <cassert>
+#include <memory>
 #include <getopt.h>
 #include "http_reader_blockcache.h"
 #include "http_reader_trivialcache.h"
+#include "tile_loader.h"
 
 
 int window_width = 2000;
@@ -66,6 +68,8 @@ std::vector<heif_image_handle*> pymd_layer_handles;
 uint32_t active_layer;
 
 heif_image_tiling tiling;
+
+std::unique_ptr<TileLoader> tile_loader;
 
 void move_tile_to_front_of_lru_cache(size_t idx)
 {
@@ -306,7 +310,13 @@ int main(int argc, char** argv)
 
   SetTargetFPS(50);
 
+  // Create tile loader with load_tile as callback
+  tile_loader = std::make_unique<TileLoader>(load_tile, 1);
+
   while (!WindowShouldClose()) {
+
+    // Mark all queued tiles as unwanted before scanning visible tiles
+    tile_loader->mark_all_unwanted();
 
     BeginDrawing();
     ClearBackground({50, 50, 50, 255});
@@ -422,9 +432,8 @@ int main(int argc, char** argv)
           tiles.push_back(t);
           move_tile_to_front_of_lru_cache(tiles.size() - 1);
 
-          // load Tile
-          std::thread loadingThread(load_tile, tx, ty, active_layer);
-          loadingThread.detach();
+          // Queue tile for loading (prioritized)
+          tile_loader->queue_tile(tx, ty, active_layer);
         }
       }
     }
@@ -452,6 +461,10 @@ int main(int argc, char** argv)
 
     EndDrawing();
   }
+
+  // Shutdown tile loader before closing window
+  tile_loader->shutdown();
+  tile_loader.reset();
 
   CloseWindow();
 

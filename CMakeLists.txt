@@ -27,7 +27,7 @@ find_package(CURL REQUIRED)
 # Executable
 
 add_executable(${PROJECT_NAME})
-target_sources(${PROJECT_NAME} PRIVATE sources/main.cc sources/http_reader_blockcache.cc sources/http_reader_trivialcache.cc)
+target_sources(${PROJECT_NAME} PRIVATE sources/main.cc sources/http_reader_blockcache.cc sources/http_reader_trivialcache.cc sources/tile_loader.cc)
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_INCLUDE})
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib)
 
