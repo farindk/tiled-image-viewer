@@ -9,6 +9,37 @@ Dependencies:
 
 Pan with the mouse. If the image has a multi-resolution `pymd` pyramid group, you can use the mouse wheel to browse through the resolution layers.
 
+## Usage
+
+```
+tiled_image_viewer [options] <image.heif | URL>
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `-t, --trivial-reader` | Use trivial cache reader instead of block cache (URL mode) |
+| `--no-transforms` | Do not process HEIF image transformations |
+| `-u, --url` | Treat input as HTTP/HTTPS URL |
+| `-p, --primary` | Start with primary image (default: start at overview image) |
+| `-b, --block-size <kB>` | Block size in kB for block cache reader (default: 64) |
+| `-h, --help` | Show help |
+
+**Examples:**
+```bash
+# View local file
+./tiled_image_viewer image.heif
+
+# View remote image via URL (uses 64KB block cache by default)
+./tiled_image_viewer -u https://example.com/image.heif
+
+# View remote image with larger block cache
+./tiled_image_viewer -u -b 128 https://example.com/image.heif
+
+# View remote image with trivial cache reader
+./tiled_image_viewer -u -t https://example.com/image.heif
+```
+
 ## Example Images
 
 | Content | Resolution | File Size | Description | Link | Notes |
