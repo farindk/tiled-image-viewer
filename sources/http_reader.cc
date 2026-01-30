@@ -232,7 +232,7 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
   // Fetch the range
 
   start = start_block * BLOCK_SIZE;
-  end = last_block * BLOCK_SIZE + BLOCK_SIZE - 1;
+  end = last_block * BLOCK_SIZE + BLOCK_SIZE;
 
   if (end > impl->file_size) {
     end = impl->file_size;
@@ -251,9 +251,12 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
     return result;
   }
 
-  for (int block = start_block ; block <= last_block ; block++) {
-    impl->cache[block].data.resize(BLOCK_SIZE);
-    memcpy(impl->cache[block].data.data(), fetched_data.data() + block * BLOCK_SIZE, BLOCK_SIZE);
+  for (int block = start_block; block <= last_block; block++) {
+    size_t block_data_offset = (block - start_block) * BLOCK_SIZE;
+    size_t bytes_to_copy = std::min((size_t) BLOCK_SIZE, fetched_data.size() - block_data_offset);
+
+    impl->cache[block].data.resize(bytes_to_copy);
+    memcpy(impl->cache[block].data.data(), fetched_data.data() + block_data_offset, bytes_to_copy);
   }
 
   return result;
