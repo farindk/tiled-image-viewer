@@ -42,7 +42,7 @@ tiled_image_viewer [options] <image.heif | URL>
 
 ## Example Images
 
-**Note:** These images require libheif v1.19.x due to format changes. Updated images will be uploaded in the future.
+**Note:** These images require libheif v1.19.x due to format changes in later versions. Updated images will be uploaded in the future.
 
 | Content | Resolution | File Size | Description | Link | Notes |
 | ------- | ---------- | --------- | ----------- | ---- | ----- |
