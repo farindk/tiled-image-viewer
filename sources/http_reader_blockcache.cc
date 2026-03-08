@@ -101,15 +101,15 @@ static int cb_read(void* data, size_t size, void* userdata)
   }
 
   uint8_t* out = static_cast<uint8_t*>(data);
-  int remaining = (int) size;
+  int64_t remaining = (int64_t) size;
   uint64_t pos = impl->current_position;
   uint32_t block_size = impl->block_size;
 
   bool found = true;
 
-  int first_block = pos / block_size;
-  int last_block = (pos + size - 1) / block_size;
-  for (int b = first_block; b <= last_block; b++) {
+  int64_t first_block = pos / block_size;
+  int64_t last_block = (pos + size - 1) / block_size;
+  for (int64_t b = first_block; b <= last_block; b++) {
     if (impl->cache[b].data.empty()) {
       found = false;
       break;
@@ -117,14 +117,14 @@ static int cb_read(void* data, size_t size, void* userdata)
   }
 
   if (found) {
-    for (int b = first_block; b <= last_block; b++) {
-      int block_start_pos = b * block_size;
-      int block_end_pos = block_start_pos + block_size;
+    for (int64_t b = first_block; b <= last_block; b++) {
+      int64_t block_start_pos = b * block_size;
+      int64_t block_end_pos = block_start_pos + block_size;
 
-      int max_block_copy = block_end_pos - pos;
-      int to_copy = std::min(remaining, max_block_copy);
+      int64_t max_block_copy = block_end_pos - pos;
+      int64_t to_copy = std::min(remaining, max_block_copy);
 
-      int offset_in_block = pos - block_start_pos;
+      int64_t offset_in_block = pos - block_start_pos;
 
       memcpy(out, impl->cache[b].data.data() + offset_in_block, to_copy);
       out += to_copy;
@@ -191,13 +191,24 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
 
   uint32_t block_size = impl->block_size;
 
+  // Clamp range to file size (end is exclusive)
+  if (start >= (uint64_t)impl->file_size) {
+    result.status = heif_reader_grow_status_error;
+    result.reader_error_code = 1;
+    return result;
+  }
+  if (end > (uint64_t)impl->file_size) {
+    end = (uint64_t)impl->file_size;
+    result.range_end = end;
+  }
+
   // Note: end is exclusive (one byte after last position)
   uint64_t last_byte = end > 0 ? end - 1 : 0;
 
   // Extend to full block
 
-  int start_block = start / block_size;
-  int last_block = last_byte / block_size;
+  int64_t start_block = start / block_size;
+  int64_t last_block = last_byte / block_size;
 
   while (start_block <= last_block) {
     if (!impl->cache[start_block].data.empty()) {
@@ -242,7 +253,7 @@ static struct heif_reader_range_request_result cb_request_range(uint64_t start, 
     return result;
   }
 
-  for (int block = start_block; block <= last_block; block++) {
+  for (int64_t block = start_block; block <= last_block; block++) {
     size_t block_data_offset = (block - start_block) * block_size;
     size_t bytes_to_copy = std::min((size_t) block_size, fetched_data.size() - block_data_offset);
 
