@@ -18,6 +18,8 @@
  */
 
 #include <libheif/heif.h>
+#include <libheif/heif_uncompressed.h>
+#include <libheif/heif_uncompressed_types.h>
 #include <raylib.h>
 
 #include <cmath>
@@ -40,6 +42,12 @@ int window_height = 2000;
 int tile_cache_size = 150;
 
 bool process_transformations = true;
+
+// Auto-detected from the first decoded tile (set in main, read by load_tile).
+bool is_float_mono = false;
+
+float float_min = 0.0f;
+float float_max = 1.0f;
 
 enum class tile_state
 {
@@ -95,7 +103,10 @@ void load_tile(int tx, int ty, int layer)
   heif_decoding_options* options = heif_decoding_options_alloc();
   options->ignore_transformations = !process_transformations;
 
-  heif_error err = heif_image_handle_decode_image_tile(pymd_layer_handles[layer], &img, heif_colorspace_RGB, heif_chroma_interleaved_RGBA, options, tx, ty);
+  heif_colorspace decode_colorspace = is_float_mono ? heif_colorspace_undefined : heif_colorspace_RGB;
+  heif_chroma decode_chroma = is_float_mono ? heif_chroma_undefined : heif_chroma_interleaved_RGBA;
+
+  heif_error err = heif_image_handle_decode_image_tile(pymd_layer_handles[layer], &img, decode_colorspace, decode_chroma, options, tx, ty);
   heif_decoding_options_free(options);
 
   if (err.code) {
@@ -103,14 +114,57 @@ void load_tile(int tx, int ty, int layer)
     exit(0);
   }
 
-  int stride;
-  const uint8_t* data = heif_image_get_plane_readonly(img, heif_channel_interleaved, &stride);
-
   Color* pixels = (Color*) malloc(tile_width * tile_height * sizeof(Color));
 
-  // Fill the image with RGB pixels
-  for (int y = 0; y < tile_height; y++) {
-    memcpy(&pixels[y * tile_width], data + y * stride, tile_width * 4);
+  if (is_float_mono) {
+    // Find the 32-bit floating-point monochrome component and read it via the float32 API.
+    uint32_t n = heif_image_get_number_of_used_components(img);
+    uint32_t ids[16];
+    if (n > 16) n = 16;
+    heif_image_get_used_component_ids(img, ids);
+
+    uint32_t float_comp_idx = UINT32_MAX;
+    for (uint32_t i = 0; i < n; i++) {
+      uint16_t ctype = heif_image_get_component_type(img, ids[i]);
+      heif_component_datatype dtype = heif_image_get_component_datatype(img, ids[i]);
+      int bpp = heif_image_get_component_bits_per_pixel(img, ids[i]);
+      if (ctype == heif_unci_component_type_monochrome &&
+          dtype == heif_component_datatype_floating_point &&
+          bpp == 32) {
+        float_comp_idx = ids[i];
+        break;
+      }
+    }
+
+    if (float_comp_idx == UINT32_MAX) {
+      printf("Tile %d;%d (layer %d) has no monochrome 32-bit component; cannot apply float mapping\n", tx, ty, layer);
+      memset(pixels, 0, tile_width * tile_height * sizeof(Color));
+    }
+    else {
+      size_t byte_stride = 0;
+      const float* data = heif_image_get_component_float32_readonly(img, float_comp_idx, &byte_stride);
+      size_t float_stride = byte_stride / sizeof(float);
+      float scale = 255.0f / (float_max - float_min);
+
+      for (int y = 0; y < tile_height; y++) {
+        const float* row = data + (size_t) y * float_stride;
+        for (int x = 0; x < tile_width; x++) {
+          float v = (row[x] - float_min) * scale;
+          if (v < 0.0f) v = 0.0f;
+          else if (v > 255.0f) v = 255.0f;
+          uint8_t g = (uint8_t) v;
+          pixels[y * tile_width + x] = {g, g, g, 255};
+        }
+      }
+    }
+  }
+  else {
+    int stride;
+    const uint8_t* data = heif_image_get_plane_readonly(img, heif_channel_interleaved, &stride);
+
+    for (int y = 0; y < tile_height; y++) {
+      memcpy(&pixels[y * tile_width], data + y * stride, tile_width * 4);
+    }
   }
 
   Image image = {
@@ -142,6 +196,8 @@ static struct option long_options[] = {
     {(char* const) "url",             no_argument,       0, 'u'},
     {(char* const) "primary",         no_argument,       0, 'p'},
     {(char* const) "block-size",      required_argument, 0, 'b'},
+    {(char* const) "float-min",       required_argument, 0, 1000},
+    {(char* const) "float-max",       required_argument, 0, 1001},
     {(char* const) "help",            no_argument,       0, 'h'},
     {0, 0,                                               0, 0}
 };
@@ -158,6 +214,8 @@ void show_help(const char* argv0)
   fprintf(stderr, "  -u, --url              treat input as HTTP/HTTPS URL\n");
   fprintf(stderr, "  -p, --primary          start with primary image (if not given, start at overview image)\n");
   fprintf(stderr, "  -b, --block-size <kB>  block size in kB for block cache reader (default: 64)\n");
+  fprintf(stderr, "      --float-min <v>    for float monochrome images: lower bound mapped to 0 (default 0.0)\n");
+  fprintf(stderr, "      --float-max <v>    for float monochrome images: upper bound mapped to 255 (default 1.0)\n");
   fprintf(stderr, "  -h, --help             show help\n");
 }
 
@@ -196,10 +254,21 @@ int main(int argc, char** argv)
           return 1;
         }
         break;
+      case 1000:
+        float_min = (float) atof(optarg);
+        break;
+      case 1001:
+        float_max = (float) atof(optarg);
+        break;
       case 'h':
         show_help(argv[0]);
         return 0;
     }
+  }
+
+  if (float_max <= float_min) {
+    fprintf(stderr, "Error: --float-max must be greater than --float-min\n");
+    return 1;
   }
 
   if (optind != argc - 1) {
@@ -304,6 +373,37 @@ int main(int argc, char** argv)
 
   printf("tilesize: %u x %u\n", tiling.tile_width, tiling.tile_height);
   printf("tiles: %u x %u\n", tiling.num_columns, tiling.num_rows);
+
+
+  // --- Probe tile (0,0) of the active layer with native colorspace to detect a
+  //     monochrome float32 component. The result selects the decode parameters
+  //     used throughout the session, so we do this once instead of per tile.
+  {
+    heif_image* probe = nullptr;
+    heif_decoding_options* probe_opts = heif_decoding_options_alloc();
+    probe_opts->ignore_transformations = !process_transformations;
+    heif_error probe_err = heif_image_handle_decode_image_tile(pymd_layer_handles[active_layer],
+                                                               &probe,
+                                                               heif_colorspace_undefined,
+                                                               heif_chroma_undefined,
+                                                               probe_opts, 0, 0);
+    heif_decoding_options_free(probe_opts);
+    if (!probe_err.code) {
+      uint32_t n = heif_image_get_number_of_used_components(probe);
+      if (n == 1) {
+        uint32_t id = 0;
+        heif_image_get_used_component_ids(probe, &id);
+        if (heif_image_get_component_type(probe, id) == heif_unci_component_type_monochrome &&
+            heif_image_get_component_datatype(probe, id) == heif_component_datatype_floating_point &&
+            heif_image_get_component_bits_per_pixel(probe, id) == 32) {
+          is_float_mono = true;
+          printf("detected float32 monochrome image; mapping range [%g..%g] to grayscale\n",
+                 float_min, float_max);
+        }
+      }
+      heif_image_release(probe);
+    }
+  }
 
 
   // --- Display image and interaction loop
