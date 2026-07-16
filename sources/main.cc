@@ -19,7 +19,6 @@
 
 #include <libheif/heif.h>
 #include <libheif/heif_uncompressed.h>
-#include <libheif/heif_uncompressed_types.h>
 #include <raylib.h>
 
 #include <cmath>
@@ -48,6 +47,8 @@ bool is_float_mono = false;
 
 float float_min = 0.0f;
 float float_max = 1.0f;
+
+const int heif_unci_component_type_monochrome = 1; // ISO/IEC 23001-17 Table 1 - Component Types
 
 enum class tile_state
 {

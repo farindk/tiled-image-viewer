@@ -3,6 +3,8 @@ project(tiled_image_viewer)
 
 find_package(PkgConfig)
 
+set(WITH_UNCOMPRESSED_CODEC ON CACHE BOOL "Enable Uncompressed Codec")
+
 # Download and compile Raylib
 
 include(FetchContent)
